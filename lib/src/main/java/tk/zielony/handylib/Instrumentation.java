@@ -5,14 +5,11 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.Bundle;
 
-/**
- * Created by Marcin on 2016-04-22.
- */
 class Instrumentation extends android.app.Instrumentation {
 
     private android.app.Instrumentation instrumentation;
 
-    ActivityLifecycleListener listener;
+    private ActivityLifecycleListener listener;
 
     public Instrumentation(android.app.Instrumentation instrumentation, ActivityLifecycleListener listener) {
         this.instrumentation = instrumentation;

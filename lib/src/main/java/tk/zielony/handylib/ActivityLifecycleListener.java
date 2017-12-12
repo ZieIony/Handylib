@@ -5,9 +5,6 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.Bundle;
 
-/**
- * Created by Marcin on 2016-04-22.
- */
 public interface ActivityLifecycleListener {
     void onCreate(Activity activity, Bundle icicle);
 

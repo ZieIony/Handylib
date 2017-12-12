@@ -11,12 +11,18 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.support.annotation.NonNull;
+import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.EditText;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,22 +38,20 @@ import java.util.Map;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 
-/**
- * Created by Marcin on 2015-07-18.
- */
 public class Handylib {
 
     private static Application application;
 
     private static Object activityThread;
     private static Class<?> activityThreadClass;
+    private static Method getApplicationMethod;
 
     private static Instrumentation instrumentation;
     private static Field instrumentationField;
 
     private static byte[] hash;
 
-    private static Map<IBinder, Object> activities;
+    private static Field activitiesField;
 
     private static WindowManager windowManager;
     private static Field viewsField;
@@ -60,11 +64,12 @@ public class Handylib {
     private Handylib() {
     }
 
-    private static void initActivityThread() {
+    static {
         try {
             activityThreadClass = Class.forName("android.app.ActivityThread");
             Method currentATMethod = activityThreadClass.getMethod("currentActivityThread");
             activityThread = currentATMethod.invoke(null);
+            getApplicationMethod = activityThreadClass.getMethod("getApplication");
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         } catch (NoSuchMethodException e) {
@@ -86,14 +91,9 @@ public class Handylib {
     Application getApplication() {
         if (application != null)
             return application;
-        if (activityThreadClass == null)
-            initActivityThread();
         try {
-            Method getApplicationMethod = activityThreadClass.getMethod("getApplication");
             application = (Application) getApplicationMethod.invoke(activityThread);
             return application;
-        } catch (NoSuchMethodException e) {
-            e.printStackTrace();
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         } catch (InvocationTargetException e) {
@@ -102,9 +102,7 @@ public class Handylib {
         return null;    // not really reached
     }
 
-    private static void initInstrumentation() {
-        if (activityThreadClass == null)
-            initActivityThread();
+    static {
         try {
             instrumentationField = activityThreadClass.getDeclaredField("mInstrumentation");
             instrumentationField.setAccessible(true);
@@ -119,8 +117,6 @@ public class Handylib {
      * @param instrumentation the instrumentation
      */
     public static void setInstrumentation(Instrumentation instrumentation) {
-        if (instrumentationField == null)
-            initInstrumentation();
         try {
             instrumentationField.set(activityThread, instrumentation);
             Handylib.instrumentation = instrumentation;
@@ -137,8 +133,6 @@ public class Handylib {
     public static Instrumentation getInstrumentation() {
         if (instrumentation != null)
             return instrumentation;
-        if (instrumentationField == null)
-            initInstrumentation();
         try {
             instrumentation = (Instrumentation) instrumentationField.get(activityThread);
             return instrumentation;
@@ -158,9 +152,6 @@ public class Handylib {
             return hash;
 
         Application app = getApplication();
-        if (app == null)
-            return null;
-
         ApplicationInfo ai = app.getApplicationInfo();
         String source = ai.sourceDir;
 
@@ -191,23 +182,27 @@ public class Handylib {
         return null;
     }
 
-    public static Map<IBinder, Object> getActivities() {
+    static {
         try {
-            Field activitiesField = activityThreadClass.getDeclaredField("mActivities");
+            activitiesField = activityThreadClass.getDeclaredField("mActivities");
             activitiesField.setAccessible(true);
-            activities = (Map<IBinder, Object>) activitiesField
-                    .get(activityThread);
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
         } catch (NoSuchFieldException e) {
             e.printStackTrace();
         }
-        return activities;
     }
 
-    private static void initActivityInfo() {
+    public static Map<IBinder, Object> getActivities() {
         try {
-            Class<?> activityClientRecordClass = Class.forName("android.app.ActivityThread.ActivityClientRecord");
+            return (Map<IBinder, Object>) activitiesField.get(activityThread);
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    static {
+        try {
+            Class<?> activityClientRecordClass = Class.forName("android.app.ActivityThread$ActivityClientRecord");
             activityClientRecordPausedField = activityClientRecordClass.getDeclaredField("paused");
             activityClientRecordPausedField.setAccessible(true);
             activityClientRecordActivityField = activityClientRecordClass.getDeclaredField("activity");
@@ -225,9 +220,8 @@ public class Handylib {
      * @return the current activity
      */
     public static Activity getCurrentActivity() {
-        if (activityClientRecordPausedField == null)
-            initActivityInfo();
         try {
+            Map<IBinder, Object> activities = getActivities();
             for (Object o : activities.values()) {
                 boolean paused = activityClientRecordPausedField.getBoolean(o);
 
@@ -265,7 +259,7 @@ public class Handylib {
         handler.post(r);
     }
 
-    private static void initWindowManager() {
+    static {
         try {
             windowManager = (WindowManager) Class.forName("android.view.WindowManagerImpl").getDeclaredMethod("getDefault").invoke(null);
         } catch (NoSuchMethodException e) {
@@ -291,8 +285,6 @@ public class Handylib {
      * @return top level views
      */
     public static List<View> getViews() {
-        if (windowManager == null)
-            initWindowManager();
         List<View> views = null;
         try {
             Object viewsObj = viewsField.get(windowManager);
@@ -325,11 +317,9 @@ public class Handylib {
      *
      * @return the first app's entry point
      */
+    @NonNull
     public static Intent getLaunchIntent() {
         List<ResolveInfo> resolveInfos = getResolveInfos();
-
-        if (resolveInfos == null)
-            return null;
 
         ActivityInfo activityInfo = resolveInfos.get(0).activityInfo;
         Intent launchIntent = new Intent();
@@ -345,9 +335,6 @@ public class Handylib {
      */
     public static List<Intent> getLaunchIntents() {
         List<ResolveInfo> resolveInfos = getResolveInfos();
-
-        if (resolveInfos == null)
-            return null;
 
         List<Intent> intents = new ArrayList<>();
 
@@ -405,6 +392,7 @@ public class Handylib {
 
     /**
      * Takes a screenshot. Captures all application's UI including dialogs and toasts
+     *
      * @return null if there's no UI
      */
     public static Bitmap takeScreenshot() {
@@ -426,4 +414,64 @@ public class Handylib {
     public static void setActivityLifecycleListener(ActivityLifecycleListener listener) {
         setInstrumentation(new tk.zielony.handylib.Instrumentation(getInstrumentation(), listener));
     }
+
+    public static String getMethodName() {
+        StackTraceElement element = Thread.currentThread().getStackTrace()[3];
+        return element.getClassName() + "." + element.getMethodName() + "(...)";
+    }
+
+    public static String getStacktrace(Throwable ex) {
+        StringBuilder stackTraceText = new StringBuilder();
+        StackTraceElement[] stackTrace = ex.getStackTrace();
+        for (int i = 0; i < stackTrace.length; i++) {
+            stackTraceText.append(stackTrace[i].toString());
+            if (i != stackTrace.length - 1)
+                stackTraceText.append("\n");
+        }
+        return stackTraceText.toString();
+    }
+
+    public static void disableFullScreenKeyboard(View view) {
+        List<View> views = new ArrayList<>();
+        views.add(view);
+        while (!views.isEmpty()) {
+            View v = views.remove(0);
+            if (v instanceof EditText) {
+                EditText editText = (EditText) v;
+                editText.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+            } else if (v instanceof ViewGroup) {
+                ViewGroup viewGroup = (ViewGroup) v;
+                for (int i = 0; i < viewGroup.getChildCount(); i++)
+                    views.add(viewGroup.getChildAt(i));
+            }
+        }
+    }
+
+    /**
+     * Hides the software keyboard, if present
+     */
+    public static void hideKeyboard() {
+        Activity activity = getCurrentActivity();
+        if (activity == null)
+            return;
+        View focusedView = activity.getCurrentFocus();
+        if (focusedView != null) {
+            InputMethodManager inputManager = (InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
+            inputManager.hideSoftInputFromWindow(focusedView.getWindowToken(), InputMethodManager.HIDE_NOT_ALWAYS);
+        }
+    }
+
+    static void logReflectionError(Exception e) {
+        StackTraceElement cause = e.getStackTrace()[0];
+        StackTraceElement stackTraceElement = Thread.currentThread().getStackTrace()[3];
+        Log.e(Handylib.class.getSimpleName(), "This feature is implemented using reflection. " +
+                "If you see this exception, something in your setup is not standard. " +
+                "Please create an issue on https://github.com/ZieIony/Carbon/issues. " +
+                "Please provide at least the following information: \n" +
+                " - device: " + Build.MANUFACTURER + " " + Build.MODEL + ", API " + Build.VERSION.SDK_INT + "\n" +
+                " - method: " + stackTraceElement.getClassName() + "." + stackTraceElement.getMethodName() + "(...)\n" +
+                " - cause: " + e.getClass().getName() + ": " + e.getMessage() + " at " + cause.getMethodName() + "(" + cause.getFileName() + ":" + cause.getLineNumber() + ")\n", e);
+    }
+
+
 }
